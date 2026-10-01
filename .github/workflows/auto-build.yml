@@ -19,17 +19,15 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 核心修复：强制使用 HTTPS 拉取子模块，并打印目录内容
-      - name: Sync and Update Submodules
+      # 核心修复：强制手动克隆缺失的第三方依赖
+      - name: Manually Clone Dependencies
         run: |
-          cat .gitmodules || echo "没有 .gitmodules 文件"
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule sync --recursive
-          git submodule update --init --recursive --force
-          echo "====== 检查 3rdparty 目录 ======"
-          ls -la 3rdparty/ || echo "3rdparty 目录不存在"
-          ls -la 3rdparty/glslang/ || echo "glslang 缺失"
-          ls -la 3rdparty/SPIRV-Cross/ || echo "SPIRV-Cross 缺失"
+          mkdir -p 3rdparty
+          cd 3rdparty
+          git clone --depth 1 https://github.com/KhronosGroup/glslang.git
+          git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Cross.git
+          echo "====== 检查依赖是否克隆成功 ======"
+          ls -la
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
