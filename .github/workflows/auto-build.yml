@@ -13,20 +13,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 拉取项目源码（包含子模块）
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # 2. 强制同步和更新子模块（解决 3rdparty/SPIRV-Cross 缺失问题）
+      # 核心修复：强制使用 HTTPS 拉取子模块，并打印目录内容
       - name: Sync and Update Submodules
         run: |
+          cat .gitmodules || echo "没有 .gitmodules 文件"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
           git submodule sync --recursive
-          git submodule update --init --recursive
+          git submodule update --init --recursive --force
+          echo "====== 检查 3rdparty 目录 ======"
+          ls -la 3rdparty/ || echo "3rdparty 目录不存在"
+          ls -la 3rdparty/glslang/ || echo "glslang 缺失"
+          ls -la 3rdparty/SPIRV-Cross/ || echo "SPIRV-Cross 缺失"
 
-      # 3. 配置 Android NDK 环境
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -34,7 +38,7 @@ jobs:
           ndk-version: r26b
           add-to-path: true
 
-      # 4. 重点：创建文件夹合为一个路径，并配置 CMake
+      # 重点：创建文件夹合为一个路径，并配置 CMake
       - name: Configure CMake
         run: |
           mkdir -p build_arm64-v8a && cd build_arm64-v8a && cmake .. \
@@ -43,12 +47,12 @@ jobs:
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release
 
-      # 5. 执行编译
+      # 执行编译
       - name: Build
         run: |
           cd build_arm64-v8a && make -j$(nproc)
 
-      # 6. 重点：收集并上传可直接下载的产物
+      # 重点：收集并上传可直接下载的产物
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
