@@ -59,3 +59,19 @@ jobs:
             build_arm64-v8a/**/*.so
             build_arm64-v8a/**/*.a
           retention-days: 7
+
+- name: Build
+  run: |
+    cd build_arm64-v8a
+    # 将全部日志写入文件，即使报错也不立刻退出
+    make -j$(nproc) > build_output.log 2>&1 || true
+    
+    echo "================ 真实的编译错误 ================"
+    # 只提取含有 error: 的报错行，并显示它前后的 3 行代码
+    grep -i -n -A 3 -B 3 "error:" build_output.log | head -n 40 || echo "没有提取到 error:，请检查是否成功编译"
+    echo "==============================================="
+    
+    # 如果提取到了错误，强制让 Action 失败；如果编译成功，则正常结束
+    if grep -q "error:" build_output.log; then
+      exit 1
+    fi
