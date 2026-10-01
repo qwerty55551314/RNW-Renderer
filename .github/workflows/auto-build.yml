@@ -1,147 +1,54 @@
 name: Android Auto Build
 
-# 1. 重点要求：同时监听 main 和 master 分支的推送和 PR
 on:
   push:
-    branches:
-      - main
-      - master
-    tags:
-      - "v*"
+    branches: [main, master]
   pull_request:
-    branches:
-      - main
-      - master
-  workflow_dispatch: # 支持在手机 App 上手动一键点击运行
-
-env:
-  NDK_VERSION: "28.2.13676358"
-  ANDROID_PLATFORM: "android-24"
+    branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build (${{ matrix.abi }})
+    name: Build (${{ matrix.android_abi }})
     runs-on: ubuntu-latest
-
     strategy:
       fail-fast: false
       matrix:
-        abi:
-          - arm64-v8a
-          - armeabi-v7a
-          - x86
-          - x86_64
+        android_abi: [arm64-v8a, armeabi-v7a, x86_64, x86]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          submodules: recursive
 
-      # 保留作者原有的三方依赖拉取
-      - name: Fetch 3rdparty dependencies
-        run: |
-          set -e
-          rm -rf 3rdparty/glslang
-          rm -rf 3rdparty/SPIRV-Cross
-          git clone --depth 1 https://github.com/KhronosGroup/glslang.git 3rdparty/glslang
-          git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Cross.git 3rdparty/SPIRV-Cross
-
-      # 修复点：改用更稳定的 NDK 独立安装动作，彻底解决 Setup 报错中断问题
       - name: Setup Android NDK
-        uses: nndess/setup-android-ndk@v1
+        uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r28
+          ndk-version: r26b
           add-to-path: true
 
-      - name: Set NDK Env
+      - name: Configure CMake
         run: |
-          echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> "$GITHUB_ENV"
-
-      - name: Verify NDK
-        run: |
-          echo "NDK: $ANDROID_NDK_HOME"
-          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
-          test -f "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
-
-      - name: Cache CMake build directory
-        uses: actions/cache@v4
-        with:
-          path: build-${{ matrix.abi }}
-          key: ${{ runner.os }}-ndk${{ env.NDK_VERSION }}-${{ matrix.abi }}-${{ hashFiles('CMakeLists.txt', 'src/**', 'include/**', '3rdparty/**') }}
-          restore-keys: |
-            ${{ runner.os }}-ndk${{ env.NDK_VERSION }}-${{ matrix.abi }}-
-
-      - name: Configure
-        run: |
-          cmake -S . \
-            -B "build-${{ matrix.abi }}" \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI="${{ matrix.abi }}" \
-            -DANDROID_PLATFORM="${{ env.ANDROID_PLATFORM }}" \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          mkdir -p build_${{ matrix.android_abi }}
+          cd build_${{ matrix.android_abi }}
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${{ matrix.android_abi }} \
+            -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: |
-          cmake --build "build-${{ matrix.abi }}" \
-            --target nw \
-            --parallel "$(nproc)"
+          cd build_${{ matrix.android_abi }}
+          make -j$(nproc)
 
-      - name: Locate output
-        id: locate
-        shell: bash
-        run: |
-          so_path="$(find "build-${{ matrix.abi }}" -type f -name 'libnw.so' -print -quit)"
-          if [ -z "$so_path" ]; then
-            echo "ERROR: libnw.so was not found."
-            exit 1
-          fi
-          echo "Found: $so_path"
-          echo "so_path=$so_path" >> "$GITHUB_OUTPUT"
-
-      # 分步暂存各架构的独立产物
-      - name: Upload ABI artifact
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnw-${{ matrix.abi }}
-          path: ${{ steps.locate.outputs.so_path }}
-          if-no-files-found: error
-
-  package:
-    name: Package release ZIP
-    needs: build
-    runs-on: ubuntu-latest
-    # 修复点：去除了原版的 if 标签限制，确保平时正常触发也能无条件执行打包流程
-
-    steps:
-      - name: Download all ABI artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      # 2. 重点要求：创建文件夹合为一个路径并直接归集拷贝
-      - name: Assemble jniLibs layout
-        shell: bash
-        run: |
-          set -e
-          for abi_dir in artifacts/libnw-*; do
-            abi="$(basename "$abi_dir" | sed 's/^libnw-//')"
-            mkdir -p "release/jniLibs/$abi"
-            cp "$abi_dir/libnw.so" "release/jniLibs/$abi/libnw.so"
-          done
-          find release -type f -print
-
-      - name: Create release ZIP
-        run: |
-          cd release
-          zip -r "../nw-renderer-all-abis.zip" jniLibs
-
-      # 3. 重点要求：直接在 Actions 页面输出可以直接下载的压缩产物
-      - name: Upload Final ZIP Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Final-Android-Libs
-          path: nw-renderer-all-abis.zip
+          name: RNW-Renderer-${{ matrix.android_abi }}
+          path: |
+            build_${{ matrix.android_abi }}/**/*.so
+            build_${{ matrix.android_abi }}/**/*.a
           retention-days: 7
